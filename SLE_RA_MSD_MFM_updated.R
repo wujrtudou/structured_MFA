@@ -620,42 +620,74 @@ print(prop.table(table(cluster_result$disease, cluster_result$cluster), margin =
 ############################################################
 ## 8. Plot alpha heatmap and cluster sizes for SLE + RA
 ############################################################
-
 plot_alpha_and_cluster <- function(fit_final,
                                    disease_label = NULL,
                                    digits = 2,
-                                   main_heat = "(a) Module effects across SLE + RA subtypes",
-                                   main_bar  = "(b) Sample size of SLE + RA subtype",
+                                   main_heat = "(a) Module effects across clusters",
+                                   main_bar  = "(b) Sample size of clusters",
                                    xlab_heat = "Module",
-                                   ylab_heat = "Subtype",
-                                   xlab_bar  = "Subtype",
+                                   ylab_heat = "Cluster",
+                                   xlab_bar  = "Cluster",
                                    ylab_bar  = "Number of samples",
                                    width_ratio = c(2.6, 1),
                                    cex_cell = 0.60,
                                    cex_axis = 0.85,
-                                   cex_main = 1.10) {
+                                   cex_main = 1.10,
+                                   cex_bar_text = 0.65,
+                                   cluster_rows = FALSE,
+                                   cluster_cols = FALSE,
+                                   disease_var = NULL,
+                                   disease_levels = c("RA", "SLE"),
+                                   disease_cols = c("RA" = "steelblue", "SLE" = "tomato")) {
   
   alpha <- as.matrix(fit_final$alpha)
   if (!is.matrix(alpha)) stop("fit_final$alpha must be a matrix.")
   
-  row_hc <- hclust(dist(alpha))
-  col_hc <- hclust(dist(t(alpha)))
-  A <- alpha[row_hc$order, col_hc$order, drop = FALSE]
+  K <- nrow(alpha)
+  M <- ncol(alpha)
   
-  if (is.null(rownames(A)) || any(rownames(A) == "")) {
-    rownames(A) <- paste0("Subtype ", row_hc$order)
-  }
+  row_ord <- if (cluster_rows) hclust(dist(alpha))$order else seq_len(K)
+  col_ord <- if (cluster_cols) hclust(dist(t(alpha)))$order else seq_len(M)
+  
+  A <- alpha[row_ord, col_ord, drop = FALSE]
+  
+  rownames(A) <- as.character(row_ord)
+  
   if (is.null(colnames(A)) || any(colnames(A) == "")) {
-    colnames(A) <- paste0("M", col_hc$order)
+    colnames(A) <- paste0("M", col_ord)
   }
   
   zlim <- range(A, finite = TRUE)
   cols <- colorRampPalette(c("blue", "white", "red"))(101)
   
-  cluster_tab <- table(fit_final$cluster)
-  K <- nrow(alpha)
-  cluster_tab <- cluster_tab[as.character(seq_len(K))]
-  cluster_tab[is.na(cluster_tab)] <- 0
+  ## Disease information
+  if (is.null(disease_var)) {
+    if (!is.null(fit_final$disease)) {
+      disease_var <- fit_final$disease
+    } else if (!is.null(disease_label)) {
+      disease_var <- disease_label
+    } else {
+      stop("Please provide disease status via fit_final$disease or disease_label.")
+    }
+  }
+  
+  disease_var <- as.character(disease_var)
+  cluster_var <- as.character(fit_final$cluster)
+  
+  if (length(disease_var) != length(cluster_var)) {
+    stop("Length of disease_var must match length of fit_final$cluster.")
+  }
+  
+  tab2 <- table(
+    factor(disease_var, levels = disease_levels),
+    factor(cluster_var, levels = as.character(seq_len(K)))
+  )
+  
+  tab2 <- tab2[, as.character(row_ord), drop = FALSE]
+  rownames(tab2) <- disease_levels
+  colnames(tab2) <- as.character(row_ord)   # 右图只显示 1, 2, 3...
+  
+  disease_cols <- disease_cols[disease_levels]
   
   layout(matrix(c(1, 2), 1, 2), widths = width_ratio)
   op <- par(no.readonly = TRUE)
@@ -674,6 +706,7 @@ plot_alpha_and_cluster <- function(fit_final,
     ylab = "",
     main = ""
   )
+  
   title(main = main_heat, cex.main = cex_main, font.main = 2)
   axis(1, at = seq_len(ncol(A)), labels = colnames(A), las = 2, cex.axis = cex_axis)
   axis(2, at = seq_len(nrow(A)), labels = rev(rownames(A)), las = 2, cex.axis = cex_axis)
@@ -682,18 +715,29 @@ plot_alpha_and_cluster <- function(fit_final,
   box()
   
   vals <- round(A, digits)
-  norm <- (A - zlim[1]) / diff(zlim)
-  txt_col <- ifelse(norm < 0.25 | norm > 0.75, "white", "black")
+  
+  if (diff(zlim) == 0) {
+    txt_col <- matrix("black", nrow = nrow(A), ncol = ncol(A))
+  } else {
+    norm <- (A - zlim[1]) / diff(zlim)
+    txt_col <- ifelse(norm < 0.25 | norm > 0.75, "white", "black")
+  }
   
   for (i in seq_len(nrow(A))) {
     for (j in seq_len(ncol(A))) {
       y_pos <- nrow(A) - i + 1
-      text(x = j, y = y_pos,
-           labels = format(vals[i, j], nsmall = digits),
-           cex = cex_cell, font = 2, col = txt_col[i, j])
+      text(
+        x = j,
+        y = y_pos,
+        labels = format(vals[i, j], nsmall = digits),
+        cex = cex_cell,
+        font = 2,
+        col = txt_col[i, j]
+      )
     }
   }
   
+  ## Heatmap legend
   usr <- par("usr")
   x0 <- usr[2] + 0.08
   x1 <- usr[2] + 0.28
@@ -703,50 +747,89 @@ plot_alpha_and_cluster <- function(fit_final,
   ys <- seq(y0, y1, length.out = nleg + 1)
   
   par(xpd = NA)
-  for (kk in seq_len(nleg)) rect(x0, ys[kk], x1, ys[kk + 1], col = cols[kk], border = NA)
+  for (kk in seq_len(nleg)) {
+    rect(x0, ys[kk], x1, ys[kk + 1], col = cols[kk], border = NA)
+  }
   rect(x0, y0, x1, y1, border = "black")
+  
   ticks <- pretty(zlim, n = 5)
-  tick_pos <- y0 + (ticks - zlim[1]) / diff(zlim) * (y1 - y0)
-  axis(4, at = tick_pos, labels = ticks, las = 2, cex.axis = 0.75)
+  if (diff(zlim) != 0) {
+    tick_pos <- y0 + (ticks - zlim[1]) / diff(zlim) * (y1 - y0)
+    axis(4, at = tick_pos, labels = ticks, las = 2, cex.axis = 0.75)
+  }
   mtext("alpha", side = 4, line = 2.2, font = 2, cex = 1.0)
   par(xpd = FALSE)
   
-  ## Barplot
+  ## Stacked barplot for RA / SLE
   par(mar = c(7, 4.8, 4.5, 1.5))
+  
+  cluster_totals <- colSums(tab2)
+  ymax <- max(cluster_totals)
+  if (ymax == 0) ymax <- 1
+  
   bp <- barplot(
-    cluster_tab,
-    col = "grey80",
+    tab2,
+    beside = FALSE,
+    col = disease_cols,
     border = "black",
-    ylim = c(0, max(cluster_tab) * 1.18),
+    ylim = c(0, ymax * 1.22),
     xlab = "",
     ylab = "",
-    main = ""
+    main = "",
+    names.arg = colnames(tab2),
+    las = 1,
+    cex.names = cex_axis
   )
+  
   mtext(main_bar, side = 3, line = 1.5, font = 2, cex = cex_main)
-  axis(1, at = bp, labels = names(cluster_tab), las = 1, cex.axis = cex_axis)
   mtext(xlab_bar, side = 1, line = 4.5, font = 2, cex = 1.05)
   mtext(ylab_bar, side = 2, line = 3.5, font = 2, cex = 1.05)
-  text(bp, cluster_tab, labels = as.integer(cluster_tab), pos = 3, cex = 0.95, font = 2)
   
-  invisible(list(alpha_ordered = A, cluster_tab = cluster_tab, zlim = zlim))
+  legend(
+    "topright",
+    legend = disease_levels,
+    fill = disease_cols,
+    border = "black",
+    bty = "n",
+    cex = 0.85
+  )
+  
+  ## Label RA / SLE counts inside bars
+  for (i in seq_len(ncol(tab2))) {
+    y_bottom <- 0
+    for (j in seq_len(nrow(tab2))) {
+      val <- tab2[j, i]
+      if (val > 0) {
+        text(
+          x = bp[i],
+          y = y_bottom + val / 2,
+          labels = as.integer(val),
+          cex = cex_bar_text,
+          font = 2,
+          col = "white"
+        )
+      }
+      y_bottom <- y_bottom + val
+    }
+  }
+  
+  invisible(list(
+    alpha_ordered = A,
+    disease_cluster_tab = tab2,
+    cluster_totals = cluster_totals,
+    row_order = row_ord,
+    col_order = col_ord,
+    zlim = zlim
+  ))
 }
-
-plot_alpha_and_cluster(fit_final, disease_label = disease_label, digits = 2)
-
-
-############################################################
-## 9. Optional: stacked disease composition per cluster
-############################################################
-
-cluster_disease_tab <- table(cluster_result$cluster, cluster_result$disease)
-barplot(
-  t(cluster_disease_tab),
-  beside = FALSE,
-  legend.text = TRUE,
-  main = "Disease composition of each discovered cluster",
-  xlab = "Cluster",
-  ylab = "Number of samples"
+plot_alpha_and_cluster(
+  fit_final,
+  disease_label = disease_label,
+  digits = 2,
+  cex_bar_text = 0.60
 )
+
+############################################################
 
 
 ############################################################
@@ -913,25 +996,6 @@ res <- analyze_gene_modules(
 print(res$module_sizes)
 print(res$summary)
 
-## Example: top GO terms for module 3, if available
-if ("3" %in% names(res$GO) && nrow(res$GO[["3"]]@result) > 0) {
-  print(res$GO[["3"]]@result[1:min(10, nrow(res$GO[["3"]]@result)),
-                              c("Description", "p.adjust", "Count")])
-}
-
-## Module score heatmap
-print(dim(res$module_score))
-heatmap(scale(res$module_score), Colv = NA)
-
-
-############################################################
-## 12. Save key outputs
-############################################################
-
-write.csv(results_sorted, "SLE_RA_BIC_results.csv", row.names = FALSE)
-write.csv(cluster_result, "SLE_RA_cluster_assignments.csv", row.names = FALSE)
-write.csv(res$summary, "SLE_RA_module_enrichment_summary.csv", row.names = FALSE)
-
 saveRDS(
   list(
     fit0 = fit0,
@@ -942,3 +1006,73 @@ saveRDS(
   ),
   file = "SLE_RA_MSD_MFM_results.rds"
 )
+
+#########################################################################
+#########################################################################
+##########################################################
+###############################################################
+############################################################
+## 13. HPO enrichment analysis for gene modules
+############################################################
+run_hpo_enrichment <- function(modules, id_map,
+                               hpo2gene, hpo2name,
+                               top_terms = 5, q_cutoff = 0.1) {
+  
+  library(clusterProfiler)
+  
+  hpo_list <- list()
+  
+  summary_hpo <- data.frame(
+    module = names(modules),
+    top_HPO = NA_character_,
+    stringsAsFactors = FALSE
+  )
+  
+  for (m in names(modules)) {
+    
+    genes_m <- modules[[m]]
+    
+    ent_m <- id_map$ENTREZID[match(genes_m, id_map$SYMBOL)]
+    ent_m <- unique(na.omit(ent_m))
+    
+    if (length(ent_m) < 10) next
+    
+    res <- try(
+      enricher(
+        gene = ent_m,
+        TERM2GENE = hpo2gene,
+        TERM2NAME = hpo2name,
+        pAdjustMethod = "BH",
+        qvalueCutoff = q_cutoff
+      ),
+      silent = TRUE
+    )
+    
+    if (!inherits(res, "try-error") && !is.null(res) && nrow(res@result) > 0) {
+      
+      hpo_list[[m]] <- res
+      
+      top_desc <- res@result$Description[
+        1:min(top_terms, nrow(res@result))
+      ]
+      
+      summary_hpo$top_HPO[summary_hpo$module == m] <-
+        paste(top_desc, collapse = "; ")
+    }
+  }
+  
+  list(HPO = hpo_list, summary = summary_hpo)
+}
+
+hpo_res <- run_hpo_enrichment(
+  modules = res$modules,
+  id_map = res$mapping,
+  hpo2gene = hpo2gene,
+  hpo2name = hpo2name
+)
+
+print(hpo_res$summary)
+
+
+
+    
